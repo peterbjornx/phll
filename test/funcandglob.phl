@@ -1,0 +1,12 @@
+int32_t global_var;
+
+int32_t func_1(int32_t par1, int32_t par2)
+{
+        int32_t local_var;
+        local_var = par1*par2+local_var+global_var*88;
+}
+
+int32_t func_2(int32_t parB)
+{
+        3+4*77*parB;
+}

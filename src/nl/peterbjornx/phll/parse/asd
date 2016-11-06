@@ -1,0 +1,621 @@
+options {
+    LOOKAHEAD=4;
+    STATIC=false;
+}
+PARSER_BEGIN(HllParser)
+package nl.peterbjornx.phll.parse;
+
+import nl.peterbjornx.phll.lang.*;
+import nl.peterbjornx.phll.ast.*;
+import nl.peterbjornx.phll.rrf.*;
+import nl.peterbjornx.phll.symbol.*;
+import nl.peterbjornx.phll.type.*;
+import nl.peterbjornx.phll.symbol.builtin.*;
+
+import java.util.*;
+
+public class HllParser
+{
+    private static SymbolStore store;
+    public static void main(String args[]) throws ParseException
+    {
+        HllParser parser = new HllParser(System.in);
+        parser.store = new SymbolStore();
+        IntegerOperators.setup(parser.store);
+
+        while (true)
+        {
+            long time = System.currentTimeMillis();
+            FunctionImplementation t  = parser.func_impl();
+            System.out.println("took: "+ (System.currentTimeMillis() - time) );
+        }
+    }
+}
+PARSER_END(HllParser)
+
+SKIP : { " " | "\n" | "\r" | "\r\n" }
+TOKEN : { < EOL: "\n" | "\r" | "\r\n" > }
+TOKEN : { < PLUS: "+" > }
+TOKEN : { < MINUS: "-"  > }
+TOKEN : { < TIMES: "*"  > }
+TOKEN : { < DIVIDE: "/" > }
+TOKEN : { < ASSIGN: "=" > }
+TOKEN : { < ADD_ASSIGN: "+=" > }
+TOKEN : { < SUB_ASSIGN: "-=" > }
+TOKEN : { < MUL_ASSIGN: "*=" > }
+TOKEN : { < DIV_ASSIGN: "/=" > }
+TOKEN : { < MOD_ASSIGN: "%=" > }
+TOKEN : { < AND_ASSIGN: "&=" > }
+TOKEN : { < XOR_ASSIGN: "^=" > }
+TOKEN : { < OR_ASSIGN:  "|=" > }
+TOKEN : { < SHL_ASSIGN: "<<=" > }
+TOKEN : { < SHR_ASSIGN: ">>=" > }
+TOKEN : { < INC: "++" > }
+TOKEN : { < DEC: "--" > }
+TOKEN : { < MODULUS: "%" > }
+TOKEN : { < ORL: "||" > }
+TOKEN : { < ANL: "&&" > }
+TOKEN : { < XOR: "^" > }
+TOKEN : { <  OR: "|" > }
+TOKEN : { < INV: "~" > }
+TOKEN : { < AND: "&" > }
+TOKEN : { < NOT: "!" > }
+TOKEN : { < SEMIC: ";" > }
+TOKEN : { < LPAR: "(" > }
+TOKEN : { < RPAR: ")" > }
+TOKEN : { < LBRAC: "{" > }
+TOKEN : { < RBRAC: "}" > }
+TOKEN : { < LSQB: "[" > }
+TOKEN : { < RSQB: "]" > }
+TOKEN : { < RSH: ">>" > }
+TOKEN : { < LSH: "<<" > }
+TOKEN : { < LT: "<" > }
+TOKEN : { < GT: ">" > }
+TOKEN : { < LEQ: "<=" > }
+TOKEN : { < GEQ: ">=" > }
+TOKEN : { < EQ: "==" > }
+TOKEN : { < NEQ: "!=" > }
+TOKEN : { < NUMBER: ((["0"-"9"])+(["."](["0"-"9"])+)?(("e"|"E")("-")?(["0"-"9"])+)?) > }
+TOKEN : {
+    < UINT32 : "uint32_t" > |
+    < SINT32 :  "int32_t" > |
+    < UINT16 : "uint16_t" > |
+    < SINT16 :  "int16_t" > |
+    < UINT8  : "uint8_t" > |
+    < SINT8  :  "int8_t" >
+}
+TOKEN : { < NAME: ((["a"-"z","A"-"Z","_"])(["a"-"z","A"-"Z","_","0"-"9"])*) > }
+TOKEN : { < COMMA: "," > }
+TOKEN : { < COLON: ":" > }
+TOKEN : { < TERN: "?" > }
+
+Type base_type():
+{
+}
+{
+       <UINT32> { return new NumericType(32, false); }
+     | <SINT32> { return new NumericType(32, true); }
+     | <UINT16> { return new NumericType(16, false); }
+     | <SINT16> { return new NumericType(16, true); }
+     | <UINT8>  { return new NumericType(8, false); }
+     | <SINT8>  { return new NumericType(8, true); }
+}
+
+List<Expression> par_list():
+{
+    List<Expression> list = new LinkedList<Expression>();
+    Expression v, v2;
+}
+{
+    v=expr() (((<COMMA> v2=expr()) {
+        list.add(v2);
+    })*
+    )  {
+        list.add(0,v);
+        return list;
+    }
+}
+
+Expression prim_expr():
+{
+    Expression val;
+    List<Expression> parlist;
+    String ex;
+    Token t2,t;
+}
+{
+      t = <NUMBER> {
+            return new NumericExpression(t.toString());
+        }
+    | t = <NAME> {
+            return new SymbolReferenceExpression(store, t.toString());
+        }
+    | <LPAR> val=expr() <RPAR> {
+            return val;
+        }
+
+}
+
+Expression postfix_expr():
+{
+    Expression l, r;
+    List<Expression> p;
+}
+{
+    l=prim_expr() (
+          <INC>  {
+            l = new UnaryExpression(store, Operator.POSTINC, l);
+        }
+        | <DEC>  {
+            l = new UnaryExpression(store, Operator.POSTDEC, l);
+         }
+        | <LSQB> r=expr() <RSQB> {
+            l = new InfixExpression(store, Operator.INDEX, l, r);
+         }
+        | <LPAR> <RPAR> {
+            l = new FunctionCallExpression(l, new LinkedList<Expression>());
+         }
+        | <LPAR> p=par_list() <RPAR> {
+            l = new FunctionCallExpression(l, p);
+         }
+    )* {
+        return l;
+    }
+}
+
+Operator unary_op():
+{
+}
+{
+    <MINUS> { return Operator.NEGATE; }
+    | <NOT> { return Operator.NOT; }
+    | <INV> { return Operator.INV; }
+    | <AND> { return Operator.ADDR_OF; }
+    | <TIMES> { return Operator.DEREF; }
+    | <PLUS> { return Operator.NOOP; }
+}
+
+Expression unary_expr():
+{
+    Expression val;
+    Operator   op;
+}
+{
+    op=unary_op() val=cast_expr() {
+        return new UnaryExpression(store, op, val);
+    }
+    | <INC> val=unary_expr() {
+        return new UnaryExpression(store, Operator.PREINC, val);
+    }
+    | <DEC> val=unary_expr() {
+        return new UnaryExpression(store, Operator.PREDEC, val);
+    }//TODO: SIZEOF
+    | val=postfix_expr() {
+        return val;
+    }
+}
+
+Expression cast_expr():
+{
+    Expression l;
+}
+{
+    //TODO: Casts
+    l=unary_expr() {
+        return l;
+    }
+}
+
+Expression mult_expr():
+{
+    Expression l,r;
+}
+{
+    l=unary_expr() ( <TIMES> r=unary_expr() {
+        l = new InfixExpression(store, Operator.MUL, l, r);
+    }
+    | <DIVIDE> r=unary_expr() {
+        l = new InfixExpression(store, Operator.DIV, l, r);
+    }
+    | <MODULUS> r=unary_expr() {
+        l = new InfixExpression(store, Operator.MOD, l, r);
+    } )* {
+        return l;
+    }
+}
+
+Expression add_expr():
+{
+    Expression l, r;
+}
+{
+    l=mult_expr() ( <PLUS> r=mult_expr() {
+        l = new InfixExpression(store, Operator.SUM, l, r);
+    }
+    | <MINUS> r=mult_expr() {
+        l = new InfixExpression(store, Operator.SUB, l, r);
+    } )* {
+        return l;
+    }
+}
+
+Expression shift_expr():
+{
+    Expression l, r;
+}
+{
+    l=add_expr() ( <LSH> r=add_expr() {
+        l = new InfixExpression(store, Operator.SHIFT_L, l, r);
+    }
+    | <RSH> r=add_expr() {
+        l = new InfixExpression(store, Operator.SHIFT_R, l, r);
+    } )* {
+        return l;
+    }
+}
+
+Expression rel_expr():
+{
+    Expression l, r;
+}
+{
+    l=shift_expr() (
+          <GT>  r=shift_expr() {
+            l = new InfixExpression(store, Operator.GREATER, l, r);
+        }
+        | <LT>  r=shift_expr() {
+            l = new InfixExpression(store, Operator.LESS, l, r);
+        }
+        | <GEQ> r=shift_expr() {
+            l = new InfixExpression(store, Operator.GREATER_EQ, l, r);
+         }
+        | <LEQ> r=shift_expr() {
+            l = new InfixExpression(store, Operator.LESS_EQ, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression eq_expr():
+{
+    Expression l, r;
+}
+{
+    l=rel_expr() (
+          <EQ>  r=rel_expr() {
+            l = new InfixExpression(store, Operator.EQUALS, l, r);
+        }
+        | <NEQ> r=rel_expr() {
+            l = new InfixExpression(store, Operator.NOT_EQ, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression and_expr():
+{
+    Expression l, r;
+}
+{
+    l=eq_expr() (
+          <AND>  r=eq_expr() {
+            l = new InfixExpression(store, Operator.AND, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression xor_expr():
+{
+    Expression l, r;
+}
+{
+    l=and_expr() (
+          <XOR>  r=and_expr() {
+            l = new InfixExpression(store, Operator.XOR, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression or_expr():
+{
+    Expression l, r;
+}
+{
+    l=xor_expr() (
+          <OR>  r=xor_expr() {
+            l = new InfixExpression(store, Operator.OR, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression scand_expr():
+{
+    Expression l, r;
+}
+{
+    l=or_expr() (
+          <ANL> r=or_expr() {
+            l = new InfixExpression(store, Operator.AND_SC, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression scor_expr():
+{
+    Expression l, r;
+}
+{
+    l=scand_expr() (
+          <ORL> r=scand_expr() {
+            l = new InfixExpression(store, Operator.OR_SC, l, r);
+        }
+    )* {
+        return l;
+    }
+}
+
+Expression tern_expr():
+{
+    Expression c, t, f;
+}
+{
+    c=scor_expr() (
+        <TERN> t=expr() <COLON> f=tern_expr() {
+
+            c = new TernaryExpression(c, t, f);
+
+        }
+        )? {
+        return c;
+    }
+}
+
+Operator assign_op():
+{
+}
+{
+          <ASSIGN> { return Operator.ASSIGN; }
+    | <MUL_ASSIGN> { return Operator.MUL_ASSIGN; }
+    | <DIV_ASSIGN> { return Operator.DIV_ASSIGN; }
+    | <ADD_ASSIGN> { return Operator.ADD_ASSIGN; }
+    | <SUB_ASSIGN> { return Operator.SUB_ASSIGN; }
+    | <MOD_ASSIGN> { return Operator.MOD_ASSIGN; }
+    | <SHL_ASSIGN> { return Operator.SHL_ASSIGN; }
+    | <SHR_ASSIGN> { return Operator.SHR_ASSIGN; }
+    | <AND_ASSIGN> { return Operator.AND_ASSIGN; }
+    | <OR_ASSIGN>  { return Operator.OR_ASSIGN;  }
+    | <XOR_ASSIGN> { return Operator.XOR_ASSIGN; }
+}
+
+Expression assign_expr():
+{
+    Expression l, r;
+    Operator op;
+}
+{
+    l=unary_expr() op=assign_op() r=assign_expr() {
+        return new InfixExpression(store, op, l, r);
+    }
+    | l=tern_expr() {
+        return l;
+    }
+}
+
+Expression const_expr():
+{
+    Expression e;
+}
+{
+    e=tern_expr() { return e; }
+}
+
+Expression expr():
+{
+    Expression v;
+}
+{
+    v=assign_expr() {
+        return v;
+    }
+}
+
+List<Statement> stat_list():
+{
+    List<Statement> list = new LinkedList<Statement>();
+    Statement s;
+}
+{
+    (s = stat() {
+        list.add(s);
+        })* {
+        return list;
+    }
+}
+
+Statement prim_stat():
+{
+    Statement  s, s2;
+    Expression e;
+    List<Statement> list;
+}
+{
+      <LBRAC> list=stat_list() <RBRAC> {
+        return new CompoundStatement(list);
+    }
+    | e=expr() <SEMIC> {
+        return new ExpressionStatement(e);
+    }
+}
+
+Statement stat():
+{
+    Statement s;
+}
+{
+    s = prim_stat() {
+        return s;
+    }
+}
+
+Type type_spec():
+{
+    Type rv;
+}
+{
+    rv=base_type() {
+        return rv;
+    }
+    | <TIMES> rv=type_spec() {
+        return new PointerType(rv);
+    }
+}
+
+VariableSymbol par_single():
+{
+    Type t;
+    Token n;
+}
+{
+    t=type_spec() n=<NAME>{
+        return new VariableSymbol(n.toString(),t);
+    }
+}
+
+List<VariableSymbol> par_decl():
+{
+    List<VariableSymbol> lv = new LinkedList<VariableSymbol>();
+    VariableSymbol vs, v2;
+}
+{
+    v2 = var_decl() (<COMMA> vs = par_single() {
+            lv.add(vs);
+        })* {
+        lv.add(0,v2);
+        return lv;
+    }
+}
+
+List<VariableSymbol> var_block():
+{
+    List<VariableSymbol> lv = new LinkedList<VariableSymbol>();
+    List<VariableSymbol> vs;
+}
+{
+    (vs = var_decl() <SEMIC> {
+            lv.addAll(vs);
+        })* {
+        return lv;
+    }
+}
+
+List<VariableSymbol> symb_decl():
+{
+    Type t;
+    Token n;
+    FunctionImplementation fi;
+    List<VariableSymbol> ps,vd;
+    List<Statement> ls;
+}
+{
+    t=type_spec() n=<NAME> (
+    (
+        (
+            (<LPAR> <RPAR> { ps = new LinkedList<VariableSymbol>(); } ) |
+            (<LPAR> ps=par_decl() <RPAR>)
+        )
+     <LBRAC>
+      (vd=var_block() {
+        fi = new FunctionImplementation(store);
+        store = fi.getLocalStore();
+        for ( VariableSymbol s : ps )
+            store.addSymbol(s);
+        for ( VariableSymbol s : vd )
+            store.addSymbol(s);
+      })
+      ls=stat_list()
+     <RBRAC> {
+        fi.setStatementList(ls);
+        fi.setName(n.toString());
+        fi.setType(t);
+        fi.setParameterList(ps);
+        store = store.getParent();
+        List<VariableSymbol> s = new LinkedList<VariableSymbol>();
+        s.add(new FunctionSymbol(fi));
+
+        return fi;
+    }
+    )|(
+    ((<COMMA> n2=<NAME>){
+                 vd.add(new VariableSymbol(n2.toString(),t));
+             })*)
+             {
+        vd.add(0, new VariableSymbol(n.toString(),t));
+        return vd;
+    }
+    )
+}
+
+List<VariableSymbol> var_decl():
+{
+    Type t;
+    Token n,n2;
+    List<VariableSymbol> vl = new LinkedList<VariableSymbol>();
+}
+{
+    t=type_spec() n=<NAME>( (<COMMA> n2=<NAME>){
+        vl.add(new VariableSymbol(n2.toString(),t));
+    })* {
+        return vl;
+    }
+
+}
+
+void source_unit():
+{
+    List<FunctionImplementation> fl = new LinkedList<FunctionImplementation>();
+    FunctionImplementation fi;
+    List<VariableSymbol> vd = new LinkedList<VariableSymbol>();
+}
+{
+    (vd=symb_decl(){
+        vd.addAll(vd);
+        for (VariableSymbol s:vd)
+            store.addSymbol(s);
+    })* {
+        System.out.println("---source unit---");
+        System.out.println("global symbol table:");
+        for (Symbol s : store.getSymbols()) {
+            System.out.println(s.getName()+"\t"+s.getType());
+        }
+        System.out.println("\nfunctions:");
+        for (Symbol s : store.getSymbols()) {
+            if ( ! ( s instanceof FunctionSymbol))
+                continue;
+            FunctionImplementation f = ((FunctionSymbol)f).getFunction();
+            System.out.println("************");
+            System.out.println("name:  "+f.getName());
+            System.out.println("rtype: "+f.getType());
+            int n = 0;
+            for (VariableSymbol s: f.getParameterList()) {
+                System.out.println("par"+(n++)+":\t"+s.getName()+"\t"+s.getType());
+            }
+            System.out.println("pseudoasm:\n\n");
+            CodeBlock b = new CodeBlock();
+            for (Statement s : f.getStatementList())
+                s.generate(b);
+            System.out.println(b);
+
+        }
+
+    }
+}
